@@ -1,20 +1,35 @@
 #include<reg51.h>
 
-#define GPIO_DIG   P0	//段选
-#define GPIO_PLACE P1	//位选
+#define GPIO_DIG   P0	//数码管段选
+#define GPIO_PLACE P1	//数码管位选
 #define GPIO_KEY P2  //独立键盘用P2口
+/*
+	keyValue
+*/
 #define NOKEYPRESSED -1 //无按键按下
 #define KEY1PRESSED 1 //按键1被按下
 #define KEY2PRESSED 2 //按键2被按下
 #define KEY3PRESSED 3 //按键3被按下
+/*
+	flashLightFlag
+*/
+#define DARK -1 //灭
+#define LIGHT 1 //亮
+/*
+	flashLocationFlag
+*/
 #define NOFLASH 0 //无闪烁
-#define HOURFLASH 1 //小时数字闪烁
-#define MINUTEFLASH 2 //小时数字闪烁
-#define SECONDFLASH 3 //小时数字闪烁
-#define ALLFLASH 4 //小时数字闪烁
+#define HOURFLASH 1 //时数字闪烁
+#define MINUTEFLASH 2 //分数字闪烁
+#define SECONDFLASH 3 //秒数字闪烁
+#define ALLFLASH 4 //所有数字闪烁
+/*
+	stateFlag
+*/
 #define NORMALSTATE 0 //时钟显示模式
 #define TIMESETSTATE 1 //时间设置模式
 #define ALARMSETSTATE 2 //闹钟设置模式
+#define ALARMSTATE 3 //响铃模式
 
 //--定义全局变量--//
 
@@ -28,7 +43,6 @@ unsigned char code DIG_CODE[17] = {
 
 sbit Beep =  P3^0 ; 
    
-unsigned char n=0;  //n为节拍常数变量    
 unsigned char code music_tab[] ={   
 0x18, 0x30, 0x1C , 0x10, //格式为: 频率常数, 节拍常数, 频率常数, 节拍常数,    
 0x20, 0x40, 0x1C , 0x10,   
@@ -36,14 +50,13 @@ unsigned char code music_tab[] ={
 0x1C, 0x10, 0x18 , 0x40,   
 0x1C, 0x20, 0x20 , 0x20,   
 0x1C, 0x20, 0x18 , 0x20,   
-0x20, 0x80, 0xFF , 0x20,   
-0x30, 0x1C, 0x10 , 0x18,   
-0x20, 0x15, 0x20 , 0x1C,   
-0x20, 0x20, 0x20 , 0x26,   
-0x40, 0x20, 0x20 , 0x2B,   
-0x20, 0x26, 0x20 , 0x20,   
-0x20, 0x30, 0x80 , 0xFF,   
-0x20, 0x20, 0x1C , 0x10,   
+0x20, 0x80, 0x20 , 0x30, 
+0x1C, 0x10, 0x18 , 0x20,
+0x15, 0x20, 0x1C , 0x20, 
+0x20, 0x20, 0x26 , 0x40,
+0x20, 0x20, 0x2B , 0x20,
+0x26, 0x20, 0x20 , 0x20,
+0x30, 0x80, 0x20 , 0x20, 0x1C , 0x10,   
 0x18, 0x10, 0x20 , 0x20,   
 0x26, 0x20, 0x2B , 0x20,   
 0x30, 0x20, 0x2B , 0x40,   
@@ -88,8 +101,10 @@ unsigned char time_hour,time_minute,time_second;
 unsigned char alarm_hour,alarm_minute,alarm_second;
 //当前按键的值
 int keyValue = NOKEYPRESSED;
-//闪烁标志
-int flashFlag = NOFLASH;
+//闪烁亮暗标志
+int flashLightFlag = DARK;
+//闪烁位置标志
+unsigned char flashLocationFlag = NOFLASH;
 //工作状态标志
 unsigned char stateFlag = NORMALSTATE;
 //有效设置标志 
@@ -107,9 +122,11 @@ void Key_Scan(); //按键检测函数
 void Delayms(unsigned char a);
 void NormalWork(); //时钟显示状态函数
 void TimeSet();	//时间设置状态函数
-void AlarmSet(); //闹钟设置函数
-void Alarm(); //播放闹铃
-void FrequencyDelay (unsigned char m);
+void AlarmSet(); //闹钟设置状态函数
+void Alarm(); //响铃状态函数
+void Sing(); //播放闹铃函数
+int AlarmTime(); //计算响铃时间
+void FrequencyDelay (unsigned char m); //产生对应频率的PWM波的延时
 
 void main(void)
 {
@@ -117,9 +134,6 @@ void main(void)
 	encode();
 	while(1)
 	{
-		//延时一秒
-		delay();
-		UpdateState();
 		/*
 			工作状态机
 		*/
@@ -136,9 +150,15 @@ void main(void)
 				//闹钟设置模式
 				AlarmSet();
 				break;
-			
-		
+			case ALARMSTATE:
+				//响铃模式
+				Alarm();
+				break;
+					
 		}
+		//更新工作状态
+		UpdateState();
+	
 
 	}				
 }
@@ -161,9 +181,9 @@ void Init(){
 	time_minute = 59;
 	time_second = 50;
 	//初始化闹钟
-	alarm_hour = 20;
-	alarm_minute = 13;
-	alarm_second = 14;
+	alarm_hour = 00;
+	alarm_minute = 00;
+	alarm_second = 00;
 }
 /*
 	时间更新函数 将当前时间全局变量增加1秒
@@ -194,6 +214,17 @@ void UpdateTime(){
 */
 void UpdateState(){
 
+	//如果到了闹钟时间就转换到响铃状态
+	if(stateFlag != ALARMSTATE)
+	{
+		if(time_hour == alarm_hour & time_minute == alarm_minute & time_second == alarm_second)
+		{
+			stateFlag = ALARMSTATE;
+			return;	
+		}
+	//如果在响铃状态下 就不响应按键状态转换 而是在响铃状态函数中进行处理
+	}else return;
+	
 	//如果key1被按下 更新工作状态
 	if(keyValue == KEY1PRESSED){
 		//消费按键
@@ -207,7 +238,7 @@ void UpdateState(){
 		else
 			stateFlag = stateFlag == 2 ? NORMALSTATE : stateFlag+1; 
 	}
-
+	
 
 }
 /*
@@ -261,22 +292,27 @@ void DigDisplay()
 	unsigned int j;
 	for(i=0; i<8; i++)
 	{
-		if(flashFlag == ALLFLASH)
+		if(flashLightFlag == DARK & flashLocationFlag != NOFLASH)
 		{
-			GPIO_PLACE = DIG_PLACE[i];
-			GPIO_DIG = 0x00;
-		}
-		else if(i == (flashFlag)*2-2 || i == (flashFlag)*2-1)
-		{
-			GPIO_PLACE = DIG_PLACE[i];
-			GPIO_DIG = 0x00;
-		}
-		else{
+			if(flashLocationFlag == ALLFLASH)
+			{
+				GPIO_PLACE = DIG_PLACE[i];
+				GPIO_DIG = 0x00;
+			}
+			else if(i == (flashLocationFlag)*2-2 || i == (flashLocationFlag)*2-1)
+			{
+				GPIO_PLACE = DIG_PLACE[i];
+				GPIO_DIG = 0x00;
+			} else {
+				GPIO_PLACE = DIG_PLACE[i];	 //发送位选
+				GPIO_DIG = DisplayData[i];     //发送段码			
+			}
+		} else {
 			GPIO_PLACE = DIG_PLACE[i];	 //发送位选
 			GPIO_DIG = DisplayData[i];     //发送段码
 			
 		}
-		j = 10;
+		j = 100;
 		while(--j);
 		GPIO_DIG = 0x00;//消隐
 	}
@@ -288,38 +324,41 @@ void DigDisplay()
 */
 unsigned char num = 0; //定时器延时标志变量
 unsigned char oneSecondEndFlag = 0;
+unsigned char alarmFlag = 0;
 void delay(){	
-	//TR0 = 1;
-	while(oneSecondEndFlag == 1 ? oneSecondEndFlag = 0,0:1){
-		
-		//显示到数码管
-		DigDisplay();
-		//Alarm();
-		//更新闪烁标志
-		if (GPIO_KEY != 0xFF)
-		{
-			Key_Scan();
-			//这个break会导致时间不准确
-			//break;
-		}
-											  
+	
+	if(stateFlag == ALARMSTATE)
+	{
+		Sing();
 	}
-	//num = 0;
-	flashFlag = flashFlag > 0 ? flashFlag : -flashFlag;
-	//TR0 = 0;
-}
+	//显示到数码管
+	DigDisplay();
+	if (GPIO_KEY != 0xFF)
+	{
+		Key_Scan();
+	}
 
-unsigned char timeSetFlag = 0;  //时间设置标志 依据此标志停止时间更新并初始化计时器
-void T0_time() interrupt 1{
+}
+//定时器0的中断服务程序
+void T0InterruptService() interrupt 1{
 	TH0 = (65536 - 50000)/256;
 	TL0 = (65536 - 50000)%256;
 	num++;
-	if(num == 10) flashFlag = -flashFlag;
+	//Alarm2的响铃标志
+	/*
+	if(num%2 == 0){
+		alarmFlag = (alarmFlag == 0? 1 : 0);
+	}
+	*/
+	if(num == 10) 
+	{
+		flashLightFlag = LIGHT;
+	}
 	if(num == 20)
 	{
 		num = 0;
 		oneSecondEndFlag = 1;
-		
+		flashLightFlag = DARK;
 		if(stateFlag != TIMESETSTATE | setEffective != 1)
 		{
 			UpdateTime();
@@ -328,35 +367,48 @@ void T0_time() interrupt 1{
 			
 		
 	}
+
 }
 /*
 	播放闹铃
 */
-unsigned char p,m,index=0;   //m为频率常数变量 
-void Alarm(){
-	//play:   
-	 
-	a: p=music_tab[index];   
-	   if(p==0x00)       { index=0;}     //如果碰到结束符,延时1秒,回到开始再来一遍    
-	   else if(p==0xff)  { index=index+1;Delayms(100),TR1=0; goto a;}  //若碰到休止符,延时100ms,继续取下一音符    
-	   else         {m=music_tab[index++], n=music_tab[index++];}  //取频率常数 和 节拍常数    
-	   TR1=1;                                             //开定时器1    
-	   while(n!=0) Beep=~Beep,FrequencyDelay(m);
-		                           //等待节拍完成, 通过P1口输出音频(可多声道哦!)    
-	   TR1=0;                                             //关定时器1    
-	
+unsigned char frequency,beat,musicIndex=0,alarmEnd = 0;   //m为频率常数变量 
+void Sing(){	 
+	frequency = music_tab[musicIndex];   
+	if(frequency==0x00) 
+	{
+		alarmEnd = 1; 
+	} else {
+		//取频率常数 和 节拍常数
+		beat = music_tab[++musicIndex];
+		musicIndex++;
+	}     
+	//定时器1用来节拍计时
+	TR1=1;    
+	while(beat != 0) 
+	{
+		//生成对应频率的PWM波
+		Beep=~Beep;
+		FrequencyDelay(frequency);
+	} 
+	TR1=0;
+
 
 
 }
-void int0()  interrupt 3   //采用中断 控制节拍    
+//发出简单的声音
+void Alarm2(){
+	Beep=~Beep,DigDisplay(),FrequencyDelay(1);
+}
+void T1InterruptService() interrupt 3    
 {  TH1=0xd8;   
    TL1=0xef;   
-   n--;   
+   beat--;   
 }   
 void FrequencyDelay (unsigned char m)   //控制频率延时    
 {   
- unsigned i=3*m;   
- while(--i);   
+ unsigned i = 3*m;   
+ while(--i) ;   
 }  
 /*
 	键盘扫描函数
@@ -374,8 +426,7 @@ void Key_Scan()
 			i = 0;
 			while (i<40 && GPIO_KEY != 0xFF)	 //检测按键是否松开
 			{
-				//i++;
-				//elayms(10);
+				
 			}
 				
 		if(tmp == 0xFF) keyValue = NOKEYPRESSED;
@@ -398,9 +449,13 @@ void Delayms(unsigned char a)  //豪秒延时子程序
 */
 void NormalWork(){
 	//无闪烁模式
-	flashFlag = NOFLASH;
-	//更新时间
-	//UpdateTime();
+	flashLocationFlag = NOFLASH;
+	//显示到数码管
+	DigDisplay();
+	if (GPIO_KEY != 0xFF)
+	{
+		Key_Scan();
+	}
 }
 /*
 	时间设置状态函数
@@ -411,25 +466,32 @@ void TimeSet(){
 	if(!setEffective)
 	{
 		//进入全闪烁模式
-		if(flashFlag != ALLFLASH) flashFlag = ALLFLASH;
+		if(flashLocationFlag != ALLFLASH) flashLocationFlag = ALLFLASH;
 		//UpdateTime();	  	
 	
 	}
 	if(keyValue == KEY2PRESSED)
 	{
+		keyValue = NOKEYPRESSED;
 		//按下key2确认开始进行时间设置后 更新有效设置标志
 		setEffective = 1;
-		keyValue = NOKEYPRESSED;
 		//切换闪烁模式
-		flashFlag = flashFlag >= 3 ? flashFlag = HOURFLASH : flashFlag + 1;
+		flashLocationFlag = flashLocationFlag >= SECONDFLASH ? flashLocationFlag = HOURFLASH : flashLocationFlag + 1;
 	} else if (keyValue == KEY3PRESSED){
 		keyValue = NOKEYPRESSED;
-		switch(flashFlag){
+		//根据闪烁位置修改对应数值
+		switch(flashLocationFlag){
 			case 1: time_hour++; time_hour = time_hour % 24; break;
 			case 2: time_minute++; time_minute = time_minute % 60; break;
 			case 3: time_second = 0; break;	
 		}
 		encode();
+	}
+	//显示到数码管
+	//DigDisplay();
+	if (GPIO_KEY != 0xFF)
+	{
+		Key_Scan();
 	}
 
 }
@@ -440,7 +502,7 @@ void AlarmSet(){
 	if(!setEffective)
 	{
 		//进入全闪烁模式
-		flashFlag = ALLFLASH;
+		if(flashLocationFlag != ALLFLASH) flashLocationFlag = ALLFLASH;
 	}
 	if(keyValue == KEY2PRESSED)
 	{
@@ -448,17 +510,75 @@ void AlarmSet(){
 		setEffective = 1;
 		keyValue = NOKEYPRESSED;
 		//切换闪烁模式
-		flashFlag = flashFlag >= 3 ? flashFlag = HOURFLASH : flashFlag + 1;
+		flashLocationFlag = flashLocationFlag >= 3 ? flashLocationFlag = HOURFLASH : flashLocationFlag + 1;
 	} else if (keyValue == KEY3PRESSED){
 		keyValue = NOKEYPRESSED;
-		switch(flashFlag){
+		//根据闪烁位置修改对应数值
+		switch(flashLocationFlag){
 			case 1: alarm_hour++; alarm_hour = alarm_hour % 24; break;
 			case 2: alarm_minute++; alarm_minute = alarm_minute % 60; break;
 			case 3: alarm_second++; alarm_second = alarm_second % 60; break;	
 		}
+		encode();
 	}
-	//在闹钟设置状态下仍然要更新时间
-	//UpdateTime();
+	//显示到数码管
+	DigDisplay();
+	if (GPIO_KEY != 0xFF)
+	{
+		Key_Scan();
+	}
+
 }
 
+/*
+	响铃状态函数
+*/
+void Alarm(){
+	
+	unsigned char sum;
+	if(!setEffective)
+	{
+		//关闭定时器0 消除其中断服务程序对扬声器控制的影响
+		ET0 = 0;
+		//计时标志清0
+		num = 0;
+		setEffective = 1;
+	} else {
+		Sing();
+		if(alarmEnd || keyValue == KEY1PRESSED)
+		{
+			//消费按键
+			keyValue = NOKEYPRESSED;
+			//开定时器0
+			ET0 = 1;
+			//切换到时钟显示模式
+			stateFlag = NORMALSTATE;	
+			//将已经播放闹铃的时间加上
+			sum = AlarmTime();
+			time_second += sum;
+			if(time_second > 60)
+			{
+				time_minute ++;
+				time_second -= 60;
+			} 
+			//重置乐谱索引
+			musicIndex = 0;
 
+		}
+	
+	}
+	if (GPIO_KEY != 0xFF)
+	{
+		Key_Scan();
+	}
+
+
+}
+int AlarmTime(){
+	unsigned char i;
+	int sum = 0;
+	for(i = 0;i<musicIndex/2;i++){
+		sum += music_tab[2*i+1];
+	}
+	return sum/100;	
+}
