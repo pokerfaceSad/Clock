@@ -181,7 +181,7 @@ void Init(){
 	time_minute = 59;
 	time_second = 50;
 	//初始化闹钟
-	alarm_hour = 00;
+	alarm_hour = 01;
 	alarm_minute = 00;
 	alarm_second = 00;
 }
@@ -488,7 +488,7 @@ void TimeSet(){
 		encode();
 	}
 	//显示到数码管
-	//DigDisplay();
+	DigDisplay();
 	if (GPIO_KEY != 0xFF)
 	{
 		Key_Scan();
@@ -535,7 +535,7 @@ void AlarmSet(){
 */
 void Alarm(){
 	
-	unsigned char sum;
+	int sum;
 	if(!setEffective)
 	{
 		//关闭定时器0 消除其中断服务程序对扬声器控制的影响
@@ -561,8 +561,10 @@ void Alarm(){
 				time_minute ++;
 				time_second -= 60;
 			} 
+			encode();
 			//重置乐谱索引
 			musicIndex = 0;
+			setEffective = 0;
 
 		}
 	
